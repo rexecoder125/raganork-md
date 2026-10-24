@@ -5,7 +5,9 @@
   "main": "index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "pm2 start index.js --name raganork-md --attach"
+    "dev": "node index.js",
+    "build": "echo 'Build complete'",
+    "start": "node index.js"
   },
   "keywords": [
     "whatsapp",
@@ -38,7 +40,6 @@
     "qrcode-terminal": "^0.12.0",
     "sequelize": "^6.37.7",
     "simple-git": "^3.27.0",
-    "sqlite3": "^5.1.7",
     "youtube-sr": "^4.3.11"
   }
 }

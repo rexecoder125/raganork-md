@@ -24,6 +24,28 @@ async function main() {
   ensureTempDir();
   logger.info(`Created temporary directory at ${TEMP_DIR}`);
   console.log(`Raganork v${require("./package.json").version}`);
+
+  const startServer = () => {
+    const PORT = Number(process.env.PORT) || 3000;
+
+    const server = http.createServer((req, res) => {
+      if (req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("OK");
+      } else {
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("Raganork Bot is running!");
+      }
+    });
+
+    server.listen(PORT, "0.0.0.0", () => {
+      logger.info(`Web server listening on port ${PORT}`);
+      console.log(`- Web server listening on http://0.0.0.0:${PORT}`);
+    });
+  };
+
+  if (process.env.USE_SERVER !== "false") startServer();
+
   console.log(`- Configured sessions: ${SESSION.join(", ")}`);
   logger.info(`Configured sessions: ${SESSION.join(", ")}`);
   if (SESSION.length === 0) {
@@ -68,26 +90,6 @@ async function main() {
   logger.info("Bot initialization complete");
 
   initializeKickBot();
-
-  const startServer = () => {
-    const PORT = process.env.PORT || 3000;
-
-    const server = http.createServer((req, res) => {
-      if (req.url === "/health") {
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("OK");
-      } else {
-        res.writeHead(200, { "Content-Type": "text/plain" });
-        res.end("Raganork Bot is running!");
-      }
-    });
-
-    server.listen(PORT, () => {
-      logger.info(`Web server listening on port ${PORT}`);
-    });
-  };
-
-  if (process.env.USE_SERVER !== "false") startServer();
 }
 
 if (require.main === module) {

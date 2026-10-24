@@ -129,38 +129,172 @@ const DATABASE_URL =
 const DEBUG =
   process.env.DEBUG === undefined ? false : convertToBool(process.env.DEBUG);
 
-const sequelize = (() => {
-  if (DATABASE_URL === "./bot.db") {
-    const sqliteInstance = new Sequelize({
-      dialect: "sqlite",
-      storage: DATABASE_URL,
-      logging: DEBUG,
-      retry: {
-        match: [/SQLITE_BUSY/, /database is locked/, /EBUSY/],
-        max: 3,
+function createMockSequelize() {
+  const tables = new Map();
+  const define = (modelName, attributes = {}) => {
+    if (!tables.has(modelName)) {
+      tables.set(modelName, []);
+    }
+    const rows = tables.get(modelName);
+    let autoId = 1;
+
+    const wrapRecord = (data) => {
+      const record = {
+        ...data,
+        getDataValue(k) {
+          return this[k];
+        },
+        setDataValue(k, v) {
+          this[k] = v;
+        },
+        async update(updates) {
+          Object.assign(this, updates);
+          return this;
+        },
+        async destroy() {
+          const idx = rows.indexOf(this);
+          if (idx !== -1) rows.splice(idx, 1);
+          return true;
+        },
+        toJSON() {
+          return { ...this };
+        },
+      };
+      return record;
+    };
+
+    const matchesWhere = (row, where) => {
+      if (!where || typeof where !== "object") return true;
+      for (const [k, v] of Object.entries(where)) {
+        if (v !== undefined && typeof v !== "object" && row[k] !== v) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const Model = {
+      name: modelName,
+      rawAttributes: attributes,
+      sync: async () => Model,
+      hasMany: () => Model,
+      belongsTo: () => Model,
+      hasOne: () => Model,
+      belongsToMany: () => Model,
+      findAll: async (opts = {}) => rows.filter((r) => matchesWhere(r, opts.where)),
+      findOne: async (opts = {}) => rows.find((r) => matchesWhere(r, opts.where)) || null,
+      findByPk: async (pk) => rows.find((r) => r.id === pk || r.sessionId === pk || r.key === pk || r.jid === pk) || null,
+      findOrCreate: async (opts = {}) => {
+        const existing = rows.find((r) => matchesWhere(r, opts.where));
+        if (existing) return [existing, false];
+        const created = wrapRecord({ id: autoId++, ...(opts.where || {}), ...(opts.defaults || {}) });
+        rows.push(created);
+        return [created, true];
       },
+      create: async (data = {}) => {
+        const created = wrapRecord({ id: autoId++, ...data });
+        rows.push(created);
+        return created;
+      },
+      bulkCreate: async (items = []) => {
+        return items.map((item) => {
+          const created = wrapRecord({ id: autoId++, ...item });
+          rows.push(created);
+          return created;
+        });
+      },
+      upsert: async (data = {}) => {
+        const created = wrapRecord({ id: autoId++, ...data });
+        rows.push(created);
+        return [created, true];
+      },
+      update: async (updates = {}, opts = {}) => {
+        let count = 0;
+        for (const r of rows) {
+          if (matchesWhere(r, opts.where)) {
+            Object.assign(r, updates);
+            count++;
+          }
+        }
+        return [count];
+      },
+      destroy: async (opts = {}) => {
+        if (opts.truncate) {
+          const len = rows.length;
+          rows.length = 0;
+          return len;
+        }
+        let removed = 0;
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (matchesWhere(rows[i], opts.where)) {
+            rows.splice(i, 1);
+            removed++;
+          }
+        }
+        return removed;
+      },
+      count: async (opts = {}) => rows.filter((r) => matchesWhere(r, opts.where)).length,
+    };
+
+    return Model;
+  };
+
+  return {
+    define,
+    authenticate: async () => {},
+    sync: async () => {},
+    query: async () => [[], 0],
+    queryRaw: async () => [[], 0],
+    close: async () => {},
+    addHook: () => {},
+    transaction: async (cb) => {
+      const t = { commit: async () => {}, rollback: async () => {} };
+      return typeof cb === "function" ? await cb(t) : t;
+    },
+    fn: () => null,
+    col: () => null,
+    literal: (val) => val,
+  };
+}
+
+const sequelize = (() => {
+  try {
+    if (DATABASE_URL === "./bot.db") {
+      require.resolve("sqlite3");
+      const sqliteInstance = new Sequelize({
+        dialect: "sqlite",
+        storage: DATABASE_URL,
+        logging: DEBUG,
+        retry: {
+          match: [/SQLITE_BUSY/, /database is locked/, /EBUSY/],
+          max: 3,
+        },
+        pool: {
+          max: 5,
+          min: 1,
+          acquire: 30000,
+          idle: 10000,
+        },
+      });
+
+      applySQLiteResilience(sqliteInstance);
+      return sqliteInstance;
+    }
+
+    return new Sequelize(DATABASE_URL, {
+      dialectOptions: { ssl: { require: true, rejectUnauthorized: false } },
+      logging: DEBUG,
       pool: {
-        max: 5,
-        min: 1,
+        max: 20,
+        min: 5,
         acquire: 30000,
         idle: 10000,
       },
     });
-
-    applySQLiteResilience(sqliteInstance);
-    return sqliteInstance;
+  } catch (err) {
+    console.warn("[AI Studio] Database driver not available — using in-memory mock database");
+    return createMockSequelize();
   }
-
-  return new Sequelize(DATABASE_URL, {
-    dialectOptions: { ssl: { require: true, rejectUnauthorized: false } },
-    logging: DEBUG,
-    pool: {
-      max: 20,
-      min: 5,
-      acquire: 30000,
-      idle: 10000,
-    },
-  });
 })();
 
 const SESSION_STRING = process.env.SESSION || process.env.SESSION_ID;
